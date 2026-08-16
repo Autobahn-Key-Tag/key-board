@@ -1,0 +1,1086 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Key Board</title>
+
+<style>
+/* ---------------------------------------------------------------------------
+   Dark throughout, same as dispatch and for the same reasons: the advisor
+   palette was tuned against near-black, and a bright white television is a
+   glare source in a room people work in all day. Near-black rather than pure
+   black — the advisor colours vibrate against #000.
+
+   No web fonts. The system stack loads instantly and cannot fail to arrive,
+   which matters on a screen nobody is watching load.
+--------------------------------------------------------------------------- */
+:root {
+  --bg:        #0c0d0f;
+  --surface:   #16181c;
+  --surface-2: #1e2127;
+  --line:      #2a2e35;
+  --text:      #f2f4f6;
+  --dim:       #98a0aa;
+  --dimmer:    #7c848f;
+  --silver:    #e8eaed;
+  --danger:    #f0656f;
+  --ok:        #4ade80;
+  --warn:      #fbbf24;
+
+  /* The board scales itself to fit; see fitBoard(). */
+  --scale: 1;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+body { display: flex; flex-direction: column; overflow: hidden; }
+
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.hidden { display: none !important; }
+
+/* --- login ---------------------------------------------------------------- */
+#login {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 22px; padding: 24px;
+}
+#login h1 { margin: 0; font-size: 26px; letter-spacing: .02em; font-weight: 600; }
+#login p  { margin: 0; color: var(--dim); font-size: 15px; text-align: center; }
+
+#code {
+  width: 260px; padding: 16px; text-align: center;
+  font-size: 30px; letter-spacing: .34em; text-indent: .34em;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--line); border-radius: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+#code:focus { outline: 2px solid var(--silver); outline-offset: 2px; }
+
+.btn {
+  padding: 15px 26px; font-size: 17px; font-weight: 600;
+  border-radius: 12px; border: 1px solid var(--line);
+  background: var(--surface-2); color: var(--text); cursor: pointer;
+}
+.btn:active { transform: translateY(1px); }
+.btn.go     { background: var(--silver); color: var(--bg); border-color: var(--silver); }
+.btn.danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+.btn:disabled { opacity: .45; cursor: default; }
+
+.err {
+  color: var(--danger); font-size: 15px; min-height: 20px;
+  text-align: center; max-width: 460px;
+}
+
+/* --- shared header -------------------------------------------------------- */
+.bar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 16px; border-bottom: 1px solid var(--line);
+  background: var(--surface); flex: none;
+}
+.bar .grow { flex: 1; }
+.bar .who  { color: var(--dim); font-size: 13px; }
+
+/* The liveness dot. Its whole job is to make "this screen has stopped
+   updating" visible, so it is never merely decorative. */
+.live { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--dim); }
+.live .dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--ok); transition: background .2s;
+}
+.live.stale .dot { background: var(--danger); }
+.live.stale      { color: var(--danger); }
+
+/* ===========================================================================
+   THE BOARD (television, landscape)
+=========================================================================== */
+#board { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+#boardHead {
+  display: flex; align-items: baseline; gap: 20px;
+  padding: 14px 26px 10px; flex: none;
+}
+#boardHead h1 {
+  margin: 0; font-size: 26px; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--dim);
+}
+
+/* The count, deliberately the largest thing on the screen.
+   It is the only cheap defence against the board and the hooks drifting apart:
+   if this says 23 and there are 25 keys hanging up, somebody notices. */
+#count { font-size: 62px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+#countLabel { font-size: 15px; color: var(--dim); }
+
+#clock { font-size: 20px; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* A grid rather than a single row of columns, so advisor columns WRAP.
+   Eleven groups stretched across a 16:9 screen gives eleven skinny columns and
+   tags too small to read from a desk, with two thirds of the wall empty. Let
+   them wrap into two or three rows of wider columns and the tags can be three
+   times the size. Column width is what fitBoard() searches on. */
+#columns {
+  flex: 1; min-height: 0; padding: 0 20px 20px;
+  display: grid; align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(var(--colw, 200px), 1fr));
+  gap: calc(20px * var(--scale)) calc(16px * var(--scale));
+  overflow: hidden;
+}
+
+.col { min-width: 0; display: flex; flex-direction: column; gap: calc(8px * var(--scale)); }
+
+.col h2 {
+  margin: 0; display: flex; align-items: center; gap: 8px;
+  font-size: calc(17px * var(--scale)); font-weight: 600;
+  padding-bottom: calc(6px * var(--scale));
+  border-bottom: 2px solid var(--swatch, var(--line));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.col h2 .n { color: var(--dim); font-weight: 500; font-size: calc(14px * var(--scale)); }
+
+/* The advisor's NAME is always beside the colour. Twelve hues cannot all be
+   told apart by a dichromat — about one man in twelve — so colour is a grouping
+   aid and never the identifier. Do not drop the name to tidy this up. */
+.swatch { width: calc(12px * var(--scale)); height: calc(12px * var(--scale));
+          border-radius: 3px; background: var(--swatch, var(--dim)); flex: none; }
+
+.tag {
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: calc(4px * var(--scale)) solid var(--swatch, var(--line));
+  border-radius: calc(7px * var(--scale));
+  padding: calc(7px * var(--scale)) calc(10px * var(--scale));
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: calc(8px * var(--scale));
+}
+.tag .t {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: calc(30px * var(--scale)); font-weight: 700; letter-spacing: .04em;
+}
+.tag .age { font-size: calc(13px * var(--scale)); color: var(--dimmer); font-variant-numeric: tabular-nums; }
+.tag.old .age { color: var(--warn); }
+
+#empty { padding: 60px; text-align: center; color: var(--dim); font-size: 22px; }
+
+/* A board that has silently stopped updating is worse than a dark one, because
+   a dark screen sends somebody to check. This is deliberately unmissable. */
+#stale {
+  flex: none; background: var(--danger); color: #1a0508;
+  padding: 12px 26px; font-size: 19px; font-weight: 700; text-align: center;
+}
+body.is-stale #columns, body.is-stale #boardHead { opacity: .35; filter: saturate(.4); }
+
+/* ===========================================================================
+   THE KIOSK (tablet)
+=========================================================================== */
+#kiosk { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+.modes { display: flex; gap: 10px; padding: 12px 16px; flex: none; }
+.modes button {
+  flex: 1; padding: 16px; font-size: 19px; font-weight: 700;
+  border-radius: 12px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--dim); cursor: pointer;
+}
+.modes button[aria-pressed="true"] { background: var(--silver); color: var(--bg); border-color: var(--silver); }
+
+.pane { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 16px 20px; display: none; }
+.pane.on { display: block; }
+
+.field {
+  width: 100%; padding: 18px; text-align: center;
+  font-size: 44px; font-weight: 700; letter-spacing: .16em; text-indent: .16em;
+  text-transform: uppercase;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--line); border-radius: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.field:focus { outline: 2px solid var(--silver); outline-offset: 2px; }
+
+/* The advisor echo. A four-character code is otherwise unverifiable — every
+   typo produces another plausible code — so watching the right name appear is
+   the only correctness check a cashier gets on a tag they are holding. */
+#echo {
+  min-height: 34px; margin: 10px 0 4px;
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  font-size: 20px; font-weight: 600;
+}
+#echo .muted { color: var(--dimmer); font-weight: 500; }
+#echo .unknown { color: var(--danger); }
+
+.row { display: flex; gap: 10px; margin-top: 10px; }
+.row .btn { flex: 1; }
+
+.note { color: var(--dim); font-size: 14px; margin: 14px 2px 6px; }
+
+.recent { display: flex; flex-direction: column; gap: 8px; }
+.recent .item {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 4px solid var(--swatch, var(--line));
+  border-radius: 10px; padding: 10px 12px;
+}
+.recent .item .t { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                   font-size: 24px; font-weight: 700; letter-spacing: .05em; }
+.recent .item .who { flex: 1; color: var(--dim); font-size: 14px; }
+.recent .item .btn { padding: 9px 15px; font-size: 14px; }
+
+/* give-back results */
+.hits { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+.hit {
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 4px solid var(--swatch, var(--line));
+  border-radius: 10px; padding: 12px 10px; text-align: left; cursor: pointer;
+  color: var(--text);
+}
+.hit .t { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 26px; font-weight: 700; letter-spacing: .05em; }
+.hit .a { display: block; font-size: 13px; color: var(--dim); margin-top: 3px;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The one match, shown large. This IS the confirmation step: handing back a
+   customer's key is the moment that carries liability and it deserves the half
+   second, but not a dialog. */
+#one {
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 6px solid var(--swatch, var(--line));
+  border-radius: 14px; padding: 20px; margin-bottom: 14px;
+}
+#one .t { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 56px; font-weight: 700; letter-spacing: .06em; line-height: 1; }
+#one .meta { color: var(--dim); font-size: 15px; margin-top: 8px; }
+
+.toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 13px 20px; font-size: 16px; font-weight: 600;
+  max-width: 90vw; text-align: center; z-index: 50;
+}
+.toast.bad  { border-color: var(--danger); color: var(--danger); }
+.toast.good { border-color: var(--ok); color: var(--ok); }
+
+#preview {
+  flex: none; background: var(--warn); color: #241a00;
+  padding: 7px 16px; font-size: 14px; font-weight: 700; text-align: center;
+}
+</style>
+</head>
+
+<body>
+
+<!-- Only ever visible with ?preview in the URL. Loud on purpose: a fake board
+     that could be mistaken for a real one is the worst thing in this app. -->
+<div id="preview" class="hidden">PREVIEW — INVENTED DATA, NOT THE REAL BOARD</div>
+
+<!-- ---------------------------------------------------------------- login -->
+<section id="login">
+  <h1>Key Board</h1>
+  <p>Enter the 8-digit code for this screen.</p>
+  <input id="code" class="mono" type="password" inputmode="numeric"
+         autocomplete="off" maxlength="8" aria-label="8-digit code">
+  <button id="signin" class="btn go">Sign in</button>
+  <div id="loginErr" class="err"></div>
+</section>
+
+<!-- ---------------------------------------------------------------- board -->
+<section id="board" class="hidden">
+  <div id="stale" class="hidden"></div>
+  <div id="boardHead">
+    <h1>Keys we're holding</h1>
+    <div><span id="count">0</span></div>
+    <div id="countLabel">on the board</div>
+    <div style="flex:1"></div>
+    <div id="boardLive" class="live"><span class="dot"></span><span class="txt">starting…</span></div>
+    <div id="clock"></div>
+    <!-- Only for an account that can also work the kiosk. The television's
+         account never sees this, because it has nowhere else to go. -->
+    <button id="toKiosk" class="btn hidden" style="padding:8px 14px;font-size:14px">Kiosk</button>
+  </div>
+  <div id="columns"></div>
+  <div id="empty" class="hidden">No keys on the board.</div>
+</section>
+
+<!-- ---------------------------------------------------------------- kiosk -->
+<section id="kiosk" class="hidden">
+  <div class="bar">
+    <strong>Key Board</strong>
+    <span class="who" id="kioskWho"></span>
+    <span class="grow"></span>
+    <span class="who"><b id="kioskCount">0</b> held</span>
+    <div id="kioskLive" class="live"><span class="dot"></span><span class="txt"></span></div>
+    <button id="toBoard" class="btn hidden" style="padding:8px 14px;font-size:14px">Board</button>
+  </div>
+
+  <div class="modes">
+    <button id="mIn"  aria-pressed="true">Take in</button>
+    <button id="mOut" aria-pressed="false">Give back</button>
+  </div>
+
+  <div id="paneIn" class="pane on">
+    <input id="tagIn" class="field" inputmode="latin" autocomplete="off"
+           maxlength="12" placeholder="TAG" aria-label="Key tag to take in">
+    <div id="echo"></div>
+    <div class="row"><button id="doIn" class="btn go">Take this key in</button></div>
+    <div id="recentWrap" class="hidden">
+      <div class="note">Just taken in — undo if that was wrong.</div>
+      <div id="recent" class="recent"></div>
+    </div>
+  </div>
+
+  <div id="paneOut" class="pane">
+    <input id="tagOut" class="field" inputmode="latin" autocomplete="off"
+           maxlength="12" placeholder="TAG" aria-label="Key tag to give back">
+    <!-- No advisor echo here, deliberately. This field is a SEARCH, not a tag
+         being entered: half a tag is not a tag, and running it through the same
+         rule announced "No advisor" after two characters — a statement about the
+         key, made about a partial query. The advisor is on the result below,
+         where it is actually true. -->
+    <div id="one" class="hidden"></div>
+    <div id="hits" class="hits"></div>
+    <div id="noHits" class="note hidden"></div>
+  </div>
+</section>
+
+<script>
+/* ===========================================================================
+   Configuration
+
+   Both values are public by design and belong here. The publishable key is what
+   the app authenticates with before anybody signs in; it grants nothing on its
+   own — every table refuses it, and section 8 of db/schema.sql checks that.
+
+   The key that must never appear in this file, or anywhere in this repo, is the
+   SECRET one. It bypasses every rule in the schema.
+=========================================================================== */
+const SUPABASE_URL = "https://skrbuhspgtjghuvzkoko.supabase.co";
+const SUPABASE_KEY = "PASTE_THE_PUBLISHABLE_KEY_HERE";
+
+/* How often the television asks "has anything changed?". This is the cheap
+   call — two numbers, about sixty bytes — and the board itself is refetched
+   only when the answer moves. See board_version() in db/schema.sql. */
+const POLL_MS = 2000;
+
+/* How long without a successful poll before the board declares itself stale.
+   Six missed polls: long enough to ride out a hiccup, short enough that nobody
+   reads a frozen board for more than a few seconds.
+
+   This threshold is the entire difference between a screen that is wrong and a
+   screen that says it is wrong. */
+const STALE_MS = 12000;
+
+/* How long the Undo button stays on a check-in. Long enough to notice a typo,
+   short enough that it is clearly about the last thing you did. Voiding after
+   that is still possible and is not time limited — see void_key(). */
+const UNDO_MS = 60000;
+
+const STORE = "keyboard.session.v1";
+
+/* --- state ---------------------------------------------------------------- */
+let session   = null;   // { access_token, refresh_token, expires_at, user }
+let advisors  = [];     // active advisors, for the typing echo
+let board     = [];     // live rows, oldest first
+let version   = null;   // last { held, latest } seen
+let lastOkAt  = 0;      // when a poll last succeeded
+let stale     = false;
+let screen    = "login";
+let mode      = "in";
+let recent    = [];     // { id, tag, advisor_name, color, at }
+let timer     = null;
+let busy      = false;
+const PREVIEW = new URLSearchParams(location.search).has("preview");
+
+/* --- tiny helpers --------------------------------------------------------- */
+const $ = (id) => document.getElementById(id);
+
+/* Everything that reaches innerHTML goes through this. Tags are constrained to
+   [0-9A-Z] by the database and advisor names are set by the admin, so this is
+   belt and braces rather than a known hole — which is the right time to add it,
+   not after somebody finds one. */
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+function toast(msg, kind) {
+  const el = document.createElement("div");
+  el.className = "toast " + (kind || "");
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), kind === "bad" ? 5200 : 2400);
+}
+
+function ago(iso) {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1)  return "now";
+  if (mins < 60) return mins + "m";
+  const h = Math.floor(mins / 60);
+  return h < 24 ? h + "h " + (mins % 60) + "m" : Math.floor(h / 24) + "d " + (h % 24) + "h";
+}
+
+/* ===========================================================================
+   What a key tag says
+
+   A DUPLICATE of advisor_for_code() and the tag_type generated column in
+   db/schema.sql. The database is authoritative — what it stores on the row is
+   what the board shows. This copy exists only so the name can appear WHILE
+   somebody types, before anything is sent.
+
+   Length is checked FIRST, so a three-character tag is a tow-in whatever it
+   starts with: 9E1 is a tow-in, not Jovis. Tow-in tags are printed as a bare
+   number and carry no advisor character at all. This reads wrong at a glance
+   and is deliberate — keep it in step with the schema.
+=========================================================================== */
+function readTag(raw) {
+  const t = String(raw || "").trim().toUpperCase();
+  if (!t)              return { kind: "empty" };
+  if (t.length === 3)  return { kind: "tow_in" };
+  if (t.length < 3)    return { kind: "none" };
+  if (t[0] === "T")    return { kind: "tow_in" };
+  const a = advisors.find(x => x.key_char === t[0]);
+  return a ? { kind: "advisor", advisor: a } : { kind: "unknown" };
+}
+
+function echoInto(el, raw) {
+  const r = readTag(raw);
+  if (r.kind === "empty")  { el.innerHTML = ""; return; }
+  if (r.kind === "tow_in") { el.innerHTML = '<span class="muted">Tow-in</span>'; return; }
+  if (r.kind === "none")   { el.innerHTML = '<span class="muted">No advisor</span>'; return; }
+  if (r.kind === "unknown") {
+    el.innerHTML = '<span class="unknown">Unknown advisor — check the tag</span>'; return;
+  }
+  el.innerHTML = '<span class="swatch" style="--swatch:' + esc(r.advisor.color) + '"></span>'
+               + esc(r.advisor.name);
+}
+
+/* ===========================================================================
+   Talking to Supabase
+=========================================================================== */
+function headers(extra) {
+  return Object.assign({
+    "apikey": SUPABASE_KEY,
+    "Authorization": "Bearer " + (session ? session.access_token : SUPABASE_KEY),
+    "Content-Type": "application/json",
+  }, extra || {});
+}
+
+async function api(path, opts) {
+  const o = opts || {};
+  const res = await fetch(SUPABASE_URL + path, {
+    method: o.method || "GET",
+    headers: headers(o.headers),
+    body: o.body ? JSON.stringify(o.body) : undefined,
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) {
+    const err = new Error((data && (data.message || data.error_description || data.error))
+                          || ("HTTP " + res.status));
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+const rpc = (name, args) => api("/rest/v1/rpc/" + name, { method: "POST", body: args || {} });
+
+/* --- session -------------------------------------------------------------- */
+function saveSession(s) {
+  session = s;
+  try { localStorage.setItem(STORE, JSON.stringify(s)); } catch {}
+}
+function clearSession() {
+  session = null;
+  try { localStorage.removeItem(STORE); } catch {}
+}
+
+/* Access tokens last an hour. The television is expected to stay signed in for
+   months, so this has to be reliable rather than best-effort: a refresh that
+   quietly fails is a blank wall in the morning.
+
+   Refreshed a minute early so a request never races the expiry. */
+async function ensureFresh() {
+  if (!session) return false;
+  const expires = (session.expires_at || 0) * 1000;
+  if (Date.now() < expires - 60000) return true;
+
+  try {
+    const r = await fetch(SUPABASE_URL + "/auth/v1/token?grant_type=refresh_token", {
+      method: "POST",
+      headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: session.refresh_token }),
+    });
+    if (!r.ok) throw new Error("refresh rejected");
+    const d = await r.json();
+    saveSession(Object.assign({}, session, {
+      access_token: d.access_token,
+      refresh_token: d.refresh_token || session.refresh_token,
+      expires_at: d.expires_at || Math.floor(Date.now() / 1000) + (d.expires_in || 3600),
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function signIn(code) {
+  const res = await fetch(SUPABASE_URL + "/functions/v1/login", {
+    method: "POST",
+    headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || ("Sign-in failed (HTTP " + res.status + ")"));
+  return d;
+}
+
+/* ===========================================================================
+   Data
+=========================================================================== */
+async function loadAdvisors() {
+  advisors = await api("/rest/v1/service_advisors"
+    + "?select=key_char,name,color,sort_order&active=eq.true&order=sort_order.asc");
+}
+
+async function loadBoard() {
+  board = await api("/rest/v1/board?select=*&order=checked_in_at.asc");
+}
+
+/* One poll. Cheap by design: ask for the version, and only refetch the board if
+   it moved. Every successful call is also the liveness signal — which is the
+   main reason this is a poll rather than a socket. */
+async function tick() {
+  if (!session) return;
+  if (!(await ensureFresh())) { markStale("Signed out — this screen needs the code again"); return; }
+
+  try {
+    const rows = await rpc("board_version");
+    const v = Array.isArray(rows) ? rows[0] : rows;
+    lastOkAt = Date.now();
+
+    const changed = !version || v.held !== version.held || v.latest !== version.latest;
+    version = v;
+    if (changed) { await loadBoard(); render(); }
+    else         { refreshLiveness(); }
+  } catch (e) {
+    refreshLiveness();
+  }
+}
+
+function markStale(msg) {
+  stale = true;
+  document.body.classList.add("is-stale");
+  $("stale").classList.remove("hidden");
+  $("stale").textContent = msg || "This board has stopped updating — do not trust it";
+}
+
+/* Called on every tick, successful or not, so the age of the last good answer
+   is always on screen. */
+function refreshLiveness() {
+  const since = Date.now() - lastOkAt;
+  const now   = lastOkAt && since < STALE_MS;
+
+  for (const id of ["boardLive", "kioskLive"]) {
+    const el = $(id); if (!el) continue;
+    el.classList.toggle("stale", !now);
+    el.querySelector(".txt").textContent = !lastOkAt ? "connecting…"
+      : now ? "updated " + Math.round(since / 1000) + "s ago"
+            : "no answer for " + Math.round(since / 1000) + "s";
+  }
+
+  if (!now && lastOkAt) markStale();
+  if (now && stale) {
+    stale = false;
+    document.body.classList.remove("is-stale");
+    $("stale").classList.add("hidden");
+  }
+}
+
+/* ===========================================================================
+   The board
+=========================================================================== */
+
+/* Group into columns. Advisors in their configured order, then the three
+   no-advisor cases as their own columns at the end — deliberately distinct,
+   because "towed in", "no advisor assigned" and "that character matches nobody"
+   are three different things and showing them all as blank hides the third. */
+function columnsOf(rows) {
+  const byAdvisor = new Map();
+  const towIn = [], na = [], unknown = [];
+
+  for (const r of rows) {
+    if (r.advisor_id) {
+      if (!byAdvisor.has(r.advisor_id)) {
+        byAdvisor.set(r.advisor_id, {
+          name: r.advisor_name, color: r.advisor_color,
+          sort: r.advisor_sort ?? 0, rows: [],
+        });
+      }
+      byAdvisor.get(r.advisor_id).rows.push(r);
+    } else if (r.tag_type === "tow_in") towIn.push(r);
+    else if (r.tag_type === "none")     na.push(r);
+    else                                unknown.push(r);
+  }
+
+  const cols = [...byAdvisor.values()].sort((a, b) =>
+    a.sort - b.sort || a.name.localeCompare(b.name));
+
+  if (towIn.length)   cols.push({ name: "Tow-in",  color: "#7c848f", rows: towIn });
+  if (na.length)      cols.push({ name: "No advisor", color: "#5a6068", rows: na });
+  if (unknown.length) cols.push({ name: "Unknown", color: "#f0656f", rows: unknown });
+  return cols;
+}
+
+function renderBoard() {
+  $("count").textContent = board.length;
+  $("empty").classList.toggle("hidden", board.length > 0);
+
+  const cols = columnsOf(board);
+  $("columns").innerHTML = cols.map(c => `
+    <div class="col" style="--swatch:${esc(c.color)}">
+      <h2><span class="swatch"></span>${esc(c.name)}<span class="n">${c.rows.length}</span></h2>
+      ${c.rows.map(r => `
+        <div class="tag${(Date.now() - new Date(r.checked_in_at)) > 864e5 ? " old" : ""}"
+             data-at="${esc(r.checked_in_at)}">
+          <span class="t">${esc(r.tag)}</span>
+          <span class="age">${esc(ago(r.checked_in_at))}</span>
+        </div>`).join("")}
+    </div>`).join("");
+
+  /* Next frame, not now: the rows above have only just been written and the
+     search needs a settled layout to measure against. */
+  requestAnimationFrame(fitBoard);
+  refreshLiveness();
+}
+
+/* Ages tick every second without rebuilding the board. Rebuilding would restart
+   the fit routine and make the whole screen twitch once a second; it would also
+   throw away nothing but the numbers that changed. */
+function tickAges() {
+  document.querySelectorAll("#columns .tag").forEach(el => {
+    const at = el.dataset.at;
+    if (!at) return;
+    el.querySelector(".age").textContent = ago(at);
+    el.classList.toggle("old", (Date.now() - new Date(at)) > 864e5);
+  });
+}
+
+/* Find the LARGEST size that still fits. Both directions matter: a board that
+   only ever shrinks leaves two thirds of a television empty at twenty tags,
+   which is the common case, and a board that never shrinks scrolls at fifty —
+   and a board you have to scroll is a list, which has to be read rather than
+   glanced at.
+
+   Binary search on one variable. Scale drives the type size AND the minimum
+   column width, so a bigger scale means wider columns, fewer per row, more rows,
+   and eventually an overflow — which makes fit a monotonic function of scale and
+   the search valid.
+
+   Twelve passes lands within about 0.1% and costs a handful of layout flushes,
+   only when the board actually changed. */
+let fitQueued = false;
+function fitBoard() {
+  const box = $("columns");
+
+  /* Measured before the container had a height, every probe "overflows" and the
+     search bottoms out at the floor — a full-size board rendered at 0.3 in the
+     top-left corner. It looks like a broken layout rather than a timing bug,
+     which is what made it worth a guard rather than a comment. */
+  if (box.clientHeight < 60) {
+    if (!fitQueued) {
+      fitQueued = true;
+      requestAnimationFrame(() => { fitQueued = false; fitBoard(); });
+    }
+    return;
+  }
+
+  const set = (s) => {
+    document.documentElement.style.setProperty("--scale", s);
+    document.documentElement.style.setProperty("--colw", Math.round(190 * s) + "px");
+  };
+  const fits = (s) => { set(s); return box.scrollHeight <= box.clientHeight + 1; };
+
+  let lo = 0.3, hi = 4;
+  if (fits(hi)) return;                 // a nearly empty board: take the cap
+  for (let i = 0; i < 12; i++) {
+    const mid = (lo + hi) / 2;
+    if (fits(mid)) lo = mid; else hi = mid;
+  }
+
+  /* Snapped to a step rather than used exactly. The search resolves to about
+     four decimal places, so every single check-in would nudge the type size and
+     the whole wall would twitch all day. Rounding DOWN to the nearest twentieth
+     means most changes land on the step already in use and nothing moves; when
+     it does move, it moves visibly, which is easier to read than a permanent
+     shimmer. Down, never up, so the snap can never overflow what just fit. */
+  set(Math.floor(lo * 20) / 20);
+}
+
+function renderKiosk() {
+  $("kioskCount").textContent = board.length;
+  if (mode === "out") renderOut();
+  renderRecent();
+}
+
+function render() {
+  if (screen === "board") renderBoard();
+  else if (screen === "kiosk") renderKiosk();
+}
+
+/* ===========================================================================
+   Kiosk — take in
+=========================================================================== */
+async function takeIn() {
+  const el = $("tagIn");
+  const tag = el.value.trim().toUpperCase();
+  if (!tag || busy) return;
+
+  busy = true; $("doIn").disabled = true;
+  try {
+    const rows = await rpc("check_in_key", { p_tag: tag });
+    const row  = Array.isArray(rows) ? rows[0] : rows;
+    const r    = readTag(tag);
+
+    recent.unshift({
+      id: row.id, tag: row.tag, at: Date.now(),
+      advisor_name: r.kind === "advisor" ? r.advisor.name : null,
+      color: r.kind === "advisor" ? r.advisor.color : "#5a6068",
+    });
+    recent = recent.slice(0, 6);
+
+    el.value = ""; echoInto($("echo"), "");
+    toast(tag + " is on the board", "good");
+    version = null;            // force the next tick to refetch
+    await tick();
+  } catch (e) {
+    toast(e.message, "bad");
+  } finally {
+    busy = false; $("doIn").disabled = false; el.focus();
+  }
+}
+
+function renderRecent() {
+  recent = recent.filter(r => Date.now() - r.at < UNDO_MS);
+  $("recentWrap").classList.toggle("hidden", recent.length === 0);
+  $("recent").innerHTML = recent.map(r => `
+    <div class="item" style="--swatch:${esc(r.color)}">
+      <span class="t">${esc(r.tag)}</span>
+      <span class="who">${esc(r.advisor_name || "")}</span>
+      <button class="btn danger" data-undo="${esc(r.id)}">Undo</button>
+    </div>`).join("");
+}
+
+/* Undo is a void with a reason, not a delete. A mistyped tag is otherwise
+   immortal — it can never be checked out, because the key that would clear it
+   says something different. */
+async function undo(id) {
+  try {
+    await rpc("void_key", { p_id: id, p_reason: "undone at the kiosk" });
+    recent = recent.filter(r => r.id !== id);
+    toast("Taken back off the board", "good");
+    version = null; await tick();
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+/* ===========================================================================
+   Kiosk — give back
+=========================================================================== */
+function renderOut() {
+  const q = $("tagOut").value.trim().toUpperCase();
+
+  /* Filtered here rather than at the server: the tablet already holds every
+     live row, so this stays instant and keeps working through a bad moment on
+     the desk wifi. Fifty rows is nothing to search. */
+  const hits = q ? board.filter(r => r.tag.startsWith(q)) : board;
+  const one  = $("one"), list = $("hits"), none = $("noHits");
+
+  if (q && hits.length === 0) {
+    one.classList.add("hidden"); list.innerHTML = "";
+    none.classList.remove("hidden");
+    none.textContent = "No key on the board starts with " + q + ".";
+    return;
+  }
+  none.classList.add("hidden");
+
+  if (hits.length === 1) {
+    const r = hits[0];
+    one.className = ""; one.style.setProperty("--swatch", r.advisor_color || "#5a6068");
+    one.innerHTML = `
+      <div class="t">${esc(r.tag)}</div>
+      <div class="meta">${esc(r.advisor_name || labelFor(r))} · taken in ${esc(ago(r.checked_in_at))} ago</div>
+      <div class="row">
+        <button class="btn go" data-release="${esc(r.id)}">Give this key back</button>
+        <button class="btn danger" data-void="${esc(r.id)}">Not here</button>
+      </div>`;
+    list.innerHTML = "";
+    return;
+  }
+
+  one.className = "hidden";
+  list.innerHTML = hits.map(r => `
+    <button class="hit" style="--swatch:${esc(r.advisor_color || "#5a6068")}" data-pick="${esc(r.tag)}">
+      <span class="t">${esc(r.tag)}</span>
+      <span class="a">${esc(r.advisor_name || labelFor(r))}</span>
+    </button>`).join("");
+}
+
+const labelFor = (r) => r.tag_type === "tow_in" ? "Tow-in"
+                      : r.tag_type === "none"   ? "No advisor" : "Unknown";
+
+async function release(id) {
+  if (busy) return;
+  busy = true;
+  try {
+    const rows = await rpc("check_out_key", { p_id: id });
+    const row  = Array.isArray(rows) ? rows[0] : rows;
+    $("tagOut").value = "";
+    toast(row.tag + " given back", "good");
+    version = null; await tick();
+    renderOut();
+  } catch (e) { toast(e.message, "bad"); }
+  finally { busy = false; $("tagOut").focus(); }
+}
+
+/* The stale-board path. Same operation, addressed by tag rather than by a row
+   this tablet may no longer have. */
+async function releaseByTag(tag) {
+  if (busy) return;
+  busy = true;
+  try {
+    const rows = await rpc("check_out_key_by_tag", { p_tag: tag });
+    const row  = Array.isArray(rows) ? rows[0] : rows;
+    $("tagOut").value = "";
+    toast(row.tag + " given back", "good");
+    version = null; await tick();
+    renderOut();
+  } catch (e) { toast(e.message, "bad"); }
+  finally { busy = false; $("tagOut").focus(); }
+}
+
+async function voidKey(id) {
+  const why = prompt("Why is this key not on the board? (a typo, a key that was never here…)");
+  if (why === null) return;
+  try {
+    await rpc("void_key", { p_id: id, p_reason: why });
+    $("tagOut").value = "";
+    toast("Taken off the board", "good");
+    version = null; await tick();
+    renderOut();
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+/* ===========================================================================
+   Screens
+=========================================================================== */
+function show(which) {
+  screen = which;
+  $("login").classList.toggle("hidden", which !== "login");
+  $("board").classList.toggle("hidden", which !== "board");
+  $("kiosk").classList.toggle("hidden", which !== "kiosk");
+  if (which === "kiosk") setTimeout(() => $("tagIn").focus(), 50);
+}
+
+function setMode(m) {
+  mode = m;
+  $("mIn").setAttribute("aria-pressed", String(m === "in"));
+  $("mOut").setAttribute("aria-pressed", String(m === "out"));
+  $("paneIn").classList.toggle("on", m === "in");
+  $("paneOut").classList.toggle("on", m === "out");
+  const f = m === "in" ? $("tagIn") : $("tagOut");
+  f.value = ""; if (m === "in") echoInto($("echo"), "");
+  if (m === "out") renderOut();
+  setTimeout(() => f.focus(), 50);
+}
+
+/* Which screen an account gets is decided by what it can do, not by the URL.
+   The television's account can only read, so it only ever sees the board. */
+async function start() {
+  await loadAdvisors();
+
+  const u = session.user || {};
+  if (u.is_display) {
+    show("board");
+  } else {
+    $("kioskWho").textContent = u.name || "";
+    /* Anyone who can work the kiosk can also look at the board — a cashier
+       checking what is outstanding without walking to the television is the
+       cheapest version of the thing this app is for. */
+    $("toBoard").classList.remove("hidden");
+    $("toKiosk").classList.remove("hidden");
+    show("kiosk");
+    setMode("in");
+  }
+
+  await tick();
+  clearInterval(timer);
+  timer = setInterval(() => { tick(); }, POLL_MS);
+
+  /* Redraw once a second so the ages, the clock and the liveness text stay
+     honest between polls. Cheap, and it means a screen that has frozen shows an
+     age that keeps climbing rather than a number that also froze. */
+  setInterval(() => {
+    $("clock").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    refreshLiveness();
+    if (screen === "board") tickAges();
+    if (screen === "kiosk") renderRecent();
+  }, 1000);
+}
+
+/* ===========================================================================
+   Preview — layout only, never real data
+=========================================================================== */
+function previewBoard() {
+  $("preview").classList.remove("hidden");
+  advisors = [
+    { key_char:"1", name:"Anthony", color:"#d05a69", sort_order:1 },
+    { key_char:"2", name:"Mark",    color:"#cd632d", sort_order:2 },
+    { key_char:"3", name:"Johnny",  color:"#b97600", sort_order:3 },
+    { key_char:"4", name:"Ralph",   color:"#958900", sort_order:4 },
+    { key_char:"6", name:"Skip",    color:"#5c9932", sort_order:5 },
+    { key_char:"8", name:"Josh",    color:"#00a16f", sort_order:6 },
+    { key_char:"9", name:"Jovis",   color:"#00a0a2", sort_order:7 },
+    { key_char:"0", name:"Jimmy",   color:"#0096c9", sort_order:8 },
+    { key_char:"A", name:"Igor",    color:"#4087de", sort_order:9 },
+  ];
+  const n = Number(new URLSearchParams(location.search).get("preview")) || 44;
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  board = [];
+  for (let i = 0; i < n; i++) {
+    const a = advisors[i % advisors.length];
+    const special = i % 13 === 0;
+    const tag = special
+      ? (i % 26 === 0 ? "T" + (100 + i) : String(200 + i))
+      : a.key_char + letters[i % letters.length] + String(10 + (i % 89));
+    const r = readTag(tag);
+    board.push({
+      id: "p" + i, tag,
+      tag_type: r.kind === "advisor" ? "advisor" : r.kind,
+      checked_in_at: new Date(Date.now() - (i * 17 + 3) * 60000).toISOString(),
+      advisor_id:    r.kind === "advisor" ? r.advisor.key_char : null,
+      advisor_name:  r.kind === "advisor" ? r.advisor.name : null,
+      advisor_color: r.kind === "advisor" ? r.advisor.color : null,
+      advisor_sort:  r.kind === "advisor" ? r.advisor.sort_order : 99,
+    });
+  }
+  lastOkAt = Date.now();
+  show("board");
+  renderBoard();
+
+  /* ?preview&stale stops the fake heartbeat, so the degraded state can be
+     looked at on purpose. Worth having: it is the one screen nobody sees until
+     the day it matters, and "we think it turns red" is not the same as having
+     watched it turn red. */
+  const frozen = new URLSearchParams(location.search).has("stale");
+
+  setInterval(() => {
+    $("clock").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    if (!frozen) lastOkAt = Date.now();
+    refreshLiveness();
+  }, 1000);
+}
+
+/* ===========================================================================
+   Wiring
+=========================================================================== */
+$("signin").addEventListener("click", async () => {
+  const code = $("code").value.trim();
+  $("loginErr").textContent = "";
+  $("signin").disabled = true;
+  try {
+    saveSession(await signIn(code));
+    $("code").value = "";
+    await start();
+  } catch (e) {
+    $("loginErr").textContent = e.message;
+  } finally {
+    $("signin").disabled = false;
+  }
+});
+$("code").addEventListener("keydown", e => { if (e.key === "Enter") $("signin").click(); });
+
+$("mIn").addEventListener("click",  () => setMode("in"));
+$("mOut").addEventListener("click", () => setMode("out"));
+$("toBoard").addEventListener("click", () => { show("board"); render(); });
+$("toKiosk").addEventListener("click", () => { show("kiosk"); setMode(mode); render(); });
+
+$("tagIn").addEventListener("input", e => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, "");
+  echoInto($("echo"), e.target.value);
+});
+$("tagIn").addEventListener("keydown", e => { if (e.key === "Enter") takeIn(); });
+$("doIn").addEventListener("click", takeIn);
+
+$("tagOut").addEventListener("input", e => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, "");
+  renderOut();
+});
+$("tagOut").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  const q = $("tagOut").value.trim().toUpperCase();
+  if (!q) return;
+  const hits = board.filter(r => r.tag.startsWith(q));
+
+  if (hits.length === 1) { release(hits[0].id); return; }
+
+  /* No match in the copy of the board this tablet holds — but that copy may be
+     minutes old if the poll has been failing, and the cashier is standing there
+     with the key in their hand. Send the tag itself and let the database decide.
+     check_out_key_by_tag() is a single conditional write on the live row, so it
+     is safe to try and refuses cleanly if the key genuinely is not on the board.
+
+     Only for something tag-shaped: firing this on one typed character would
+     release whatever happened to match. */
+  if (hits.length === 0 && q.length >= 3) releaseByTag(q);
+});
+
+/* One delegated listener rather than one per button: the lists are rebuilt on
+   every keystroke, and re-binding handlers each time is how buttons end up
+   firing twice. */
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-release],[data-void],[data-undo],[data-pick]");
+  if (!b) return;
+  if (b.dataset.release) release(b.dataset.release);
+  else if (b.dataset.void) voidKey(b.dataset.void);
+  else if (b.dataset.undo) undo(b.dataset.undo);
+  else if (b.dataset.pick) { $("tagOut").value = b.dataset.pick; renderOut(); }
+});
+
+/* The television is a mirrored browser tab, so its size is not a fixed fact:
+   the mirror can start, stop, or change resolution under the page. Refit rather
+   than leave a board sized for a window that no longer exists. */
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (screen === "board") fitBoard(); }, 150);
+});
+
+/* A mirrored tab that was hidden and comes back may have missed many polls.
+   Ask immediately rather than waiting for the next interval, so the board is
+   never briefly wrong at the moment somebody looks at it. */
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && session) tick();
+});
+
+/* --- boot ----------------------------------------------------------------- */
+(async function boot() {
+  if (PREVIEW) return previewBoard();
+
+  if (SUPABASE_KEY.startsWith("PASTE_")) {
+    $("loginErr").textContent = "This copy has no publishable key in it yet — see index.html.";
+    return;
+  }
+
+  try { session = JSON.parse(localStorage.getItem(STORE) || "null"); } catch { session = null; }
+  if (session && await ensureFresh()) {
+    try { await start(); return; } catch { clearSession(); }
+  }
+  clearSession();
+  show("login");
+  $("code").focus();
+})();
+</script>
+</body>
+</html>
